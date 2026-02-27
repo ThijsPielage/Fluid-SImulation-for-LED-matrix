@@ -13,7 +13,7 @@ NUM_PARTICLES = 40
 # Color and Size settings
 FLUID_COLOR = (0, 80, 255)
 BACKGROUND_COLOR = (20, 20, 35)
-CELL_SIZE = 10 # pixels per cell
+CELL_SIZE = 20 # pixels per cell
 
 # Global variables
 TILT = 0.0
@@ -52,92 +52,106 @@ def update_particles(particles, gx, gy):
     random.shuffle(particles)
     grid = build_grid(particles)
 
-    # Find direction of gravity
-    if abs(gy) >= abs(gx):
-        down_x, down_y = 0, (1 if gy > 0 else -1)
-        side_x, side_y = 1, 0
-    else:
-        down_x, down_y = (1 if gx > 0 else -1), 0
-        side_x, side_y = 0, (1 if gy >= 0 else -1)
-
-
     def cell_free(cx, cy):
         if cx < 0 or cx >= SIZE or cy < 0 or cy >= SIZE:
             return False
         return not grid[cy, cx]
 
+    def gravity_dirs(gx, gy):
+        total = abs(gx) + abs(gy)
+        if total < 0.001:
+            return [(0, 1, 1.0)]
+        dirs = []
+        if abs(gy) > 0.001:
+            dirs.append((0, 1 if gy > 0 else -1, abs(gy) / total))
+        if abs(gx) > 0.001:
+            dirs.append((1 if gx > 0 else -1, 0, abs(gx) / total))
+        return dirs
 
     for p in particles:
-        # Calculate new velocity
+        # Apply gravity
         p.vx += gx * DT
         p.vy += gy * DT
-
-        # Clamp speed to terminal velocity
         p.vx = clamp(p.vx, -3.0, 3.0)
         p.vy = clamp(p.vy, -3.0, 3.0)
 
-        # Store the current cell-location
         ix = int(p.x)
         iy = int(p.y)
 
-        p_down = p.vx * down_x + p.vy * side_y
-        p_side = p.vx * side_x + p.vy * down_y
+        # Pick down direction stochastically based on gravity vector
+        dirs = gravity_dirs(gx, gy)
+        r = random.random()
+        cumulative = 0
+        down_x, down_y = dirs[-1][0], dirs[-1][1]
+        for dx, dy, prob in dirs:
+            cumulative += prob
+            if r < cumulative:
+                down_x, down_y = dx, dy
+                break
 
-        # Find candidate position
+        # Perpendicular (sideways) axis
+        side_x = -down_y
+        side_y = down_x
+
+        p_side = p.vx * side_x + p.vy * side_y
+
+        # Candidate position from velocity
         nx = int(p.x + p.vx * DT)
         ny = int(p.y + p.vy * DT)
-        
+
         moved = False
 
+        # --- Try direct move ---
         if cell_free(nx, ny):
             grid[iy, ix] = False
-            p.x = nx
-            p.y = ny
-
-            if int(p.x) <= 0:
-                p.x = 0.5
-                p.vx = abs(p.vx) * DAMP_FACTOR
-            if int(p.x) >= SIZE - 1:
-                p.x = SIZE - 1.5
-                p.vx = -abs(p.vx) * DAMP_FACTOR
-            if int(p.y) <= 0:
-                p.y = 0.5
-                p.vy = abs(p.vy) * DAMP_FACTOR
-            if int(p.y) >= SIZE - 1:
-                p.y = SIZE - 1.5
-                p.vy = -abs(p.vy) * DAMP_FACTOR
+            p.x = float(nx)
+            p.y = float(ny)
+            if int(p.x) <= 0:        p.x = 0.5;        p.vx = abs(p.vx) * DAMP_FACTOR
+            if int(p.x) >= SIZE - 1: p.x = SIZE - 1.5; p.vx = -abs(p.vx) * DAMP_FACTOR
+            if int(p.y) <= 0:        p.y = 0.5;        p.vy = abs(p.vy) * DAMP_FACTOR
+            if int(p.y) >= SIZE - 1: p.y = SIZE - 1.5; p.vy = -abs(p.vy) * DAMP_FACTOR
             grid[int(p.y), int(p.x)] = True
             moved = True
 
-        # Blocked — try falling diagonally
+        # --- Try one step in down direction ---
         if not moved:
-            dirs = [-1, 1] if random.random() < 0.5 else [1, -1]
-            if p_side > 0.1:  dirs = [1, -1]
-            elif p_side < -0.1: dirs = [-1, 1]
+            tx, ty = ix + down_x, iy + down_y
+            if cell_free(tx, ty):
+                grid[iy, ix] = False
+                p.x = float(tx)
+                p.y = float(ty)
+                p.vx *= DAMP_FACTOR
+                p.vy *= DAMP_FACTOR
+                grid[ty, tx] = True
+                moved = True
 
-            for d in dirs:
+        # --- Try diagonal (down + side) ---
+        if not moved:
+            dirs_side = [-1, 1] if random.random() < 0.5 else [1, -1]
+            if p_side > 0.1:    dirs_side = [1, -1]
+            elif p_side < -0.1: dirs_side = [-1, 1]
+
+            for d in dirs_side:
                 diag_x = ix + down_x + d * side_x
                 diag_y = iy + down_y + d * side_y
                 if cell_free(diag_x, diag_y):
                     grid[iy, ix] = False
                     p.x = float(diag_x)
                     p.y = float(diag_y)
-                    # Convert downward momentum into sideways
-                    p.vx = down_x * p_down * DAMP_FACTOR + \
-                        d * side_x * abs(p_down) * 0.4
-                    p.vy = down_y * p_down * DAMP_FACTOR + \
-                        d * side_y * abs(p_down) * 0.4
+                    p_down = p.vx * down_x + p.vy * down_y
+                    p.vx = down_x * p_down * DAMP_FACTOR + d * side_x * abs(p_down) * 0.4
+                    p.vy = down_y * p_down * DAMP_FACTOR + d * side_y * abs(p_down) * 0.4
                     grid[diag_y, diag_x] = True
                     moved = True
                     break
 
-        # --- Try sliding sideways (pressure spreading) ---
+        # --- Try sliding sideways ---
         if not moved:
-            dirs = [-1, 1] if random.random() < 0.5 else [1, -1]
-            if p_side > 0.3:  dirs = [1, -1]
-            elif p_side < -0.3: dirs = [-1, 1]
+            dirs_side = [-1, 1] if random.random() < 0.5 else [1, -1]
+            if p_side > 0.3:    dirs_side = [1, -1]
+            elif p_side < -0.3: dirs_side = [-1, 1]
 
-            for d in dirs:
+            for d in dirs_side:
                 slide_x = ix + d * side_x
                 slide_y = iy + d * side_y
                 if cell_free(slide_x, slide_y):
@@ -150,7 +164,7 @@ def update_particles(particles, gx, gy):
                     moved = True
                     break
 
-        # --- Fully blocked: come to rest ---
+        # --- Fully blocked ---
         if not moved:
             p.vx *= 0.5
             p.vy *= 0.5
