@@ -4,21 +4,26 @@ from math import floor, sin, cos
 import random
 
 # Simulation settings
-G = -10
+G = 10
 FPS = 30
 SIZE = 16
 DAMP_FACTOR = 0.6
 NUM_PARTICLES = 40
 
-TILT = 0.0
+# Color and Size settings
+FLUID_COLOR = (0, 80, 255)
+BACKGROUND_COLOR = (20, 20, 35)
+CELL_SIZE = 10 # pixels per cell
 
+# Global variables
+TILT = 0.0
 DT = 1 / FPS
 
 class Particle:
     def __init__(self, x, y):
         self.x = float(x)
         self.y = float(y)
-        self.vx = random.uniform(-0.3, 0.3)
+        self.vx = random.uniform(-2.0, 2.0)
         self.vy = 0.0
 
 
@@ -30,7 +35,7 @@ for _ in range(NUM_PARTICLES):
 
 
 def build_grid(particles):
-    grid = np.zeros((SIZE, SIZE), type=bool)
+    grid = np.zeros((SIZE, SIZE), dtype=bool)
     for p in particles:
         ix = int(p.x)
         iy = int(p.y)
@@ -155,21 +160,74 @@ def update_particles(particles, gx, gy):
     return particles
 
 
+def render(screen, particles):
+    grid = build_grid(particles)
+    for y in range(SIZE):
+        for x in range(SIZE):
+            rect = (x * CELL_SIZE, y * CELL_SIZE, CELL_SIZE - 1, CELL_SIZE - 1)
+            color = FLUID_COLOR if grid[y, x] else BACKGROUND_COLOR
+            pygame.draw.rect(screen, color, rect)
+
+
 
 
 
 
 pygame.init()
-screen = pygame.display.set_mode((SIZE*20, SIZE*20))
+screen = pygame.display.set_mode((SIZE * CELL_SIZE, SIZE * CELL_SIZE + 24))
+pygame.display.set_caption("LED Fluid Sim — Cellular Automaton")
 clock = pygame.time.Clock()
+font = pygame.font.SysFont("monospace", 11)
 
 running = True
+mouse_held = False
+
+
 while running:
     for event in pygame.event.get():
         if event.type == pygame.QUIT:
             running = False
+        if event.type == pygame.KEYDOWN:
+            if event.key == pygame.K_q:
+                running = False
+            if event.key == pygame.K_r:
+                particles = []
+                for _ in range(NUM_PARTICLES):
+                    px = random.uniform(SIZE * 0.3, SIZE * 0.7)
+                    py = random.uniform(0.5, 3.0)
+                    particles.append(Particle(px, py))
+            if event.key == pygame.K_SPACE:
+                for _ in range(10):
+                    px = random.uniform(SIZE * 0.3, SIZE * 0.7)
+                    py = random.uniform(0.0, 1.0)
+                    particles.append(Particle(px, py))
+            # Arrow keys to test tilt
+            if event.key == pygame.K_LEFT:  TILT -= 0.1
+            if event.key == pygame.K_RIGHT: TILT += 0.1
 
+        if event.type == pygame.MOUSEBUTTONDOWN:
+            mouse_held = True
+        if event.type == pygame.MOUSEBUTTONUP:
+            mouse_held = False
 
+    # Click/drag to pour particles
+    if mouse_held:
+        mx, my = pygame.mouse.get_pos()
+        cell_x = mx // CELL_SIZE
+        cell_y = my // CELL_SIZE
+        if 0 <= cell_x < SIZE and 0 <= cell_y < SIZE:
+            for _ in range(3):
+                p = Particle(cell_x + random.uniform(-0.5, 0.5),
+                             cell_y + random.uniform(-0.5, 0.5))
+                particles.append(p)
 
+    # Gravity vector from tilt angle
+    gx = G * sin(TILT)
+    gy = G * cos(TILT)
+
+    particles = update_particles(particles, gx, gy)
+    render(screen, particles)
     pygame.display.flip()
     DT = clock.tick(FPS) / 1000
+
+pygame.quit()
