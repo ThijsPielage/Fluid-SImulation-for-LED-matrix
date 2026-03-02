@@ -13,13 +13,13 @@ UPSCALE = 3
 # Color and Size settings
 FLUID_COLOR = (0, 80, 255)
 BACKGROUND_COLOR = (20, 20, 35)
-CELL_SIZE = 20 # pixels per cell
 
 TILT = 0.0
 DT = 1 / FPS
 SIM_SIZE = SIZE * UPSCALE
 NUM_PARTICLES = SIM_SIZE * SIM_SIZE // 6
 V_TERMINAL = SIM_SIZE
+CELL_SIZE = 1000 // SIZE
 
 class Particle:
     def __init__(self, x, y):
