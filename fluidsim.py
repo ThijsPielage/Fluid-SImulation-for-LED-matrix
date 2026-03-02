@@ -4,20 +4,22 @@ from math import floor, sin, cos
 import random
 
 # Simulation settings
-G = 10
+G = 100
 FPS = 30
 SIZE = 16
-DAMP_FACTOR = 0.6
-NUM_PARTICLES = 40
+DAMP_FACTOR = 0.95
+UPSCALE = 3
 
 # Color and Size settings
 FLUID_COLOR = (0, 80, 255)
 BACKGROUND_COLOR = (20, 20, 35)
 CELL_SIZE = 20 # pixels per cell
 
-# Global variables
 TILT = 0.0
 DT = 1 / FPS
+SIM_SIZE = SIZE * UPSCALE
+NUM_PARTICLES = SIM_SIZE * SIM_SIZE // 6
+V_TERMINAL = SIM_SIZE
 
 class Particle:
     def __init__(self, x, y):
@@ -29,93 +31,59 @@ class Particle:
 
 particles = []
 for _ in range(NUM_PARTICLES):
-    px = random.uniform(SIZE * 0.4, SIZE * 0.6)
-    py = random.uniform(SIZE * 0.4, SIZE * 0.6)
+    px = random.uniform(SIM_SIZE * 0.4, SIM_SIZE * 0.6)
+    py = random.uniform(SIM_SIZE * 0.4, SIM_SIZE * 0.6)
     particles.append(Particle(px, py))
 
 
 def build_grid(particles):
-    grid = np.zeros((SIZE, SIZE), dtype=bool)
+    grid = np.zeros((SIM_SIZE, SIM_SIZE), dtype=bool)
     for p in particles:
         ix = int(p.x)
         iy = int(p.y)
-        if 0 <= ix < SIZE and 0 <= iy < SIZE:
+        if 0 <= ix < SIM_SIZE and 0 <= iy < SIM_SIZE:
             grid[iy, ix] = True
     return grid
 
 
-
-def clamp(v, minv, maxv):
-    return min(max(v, minv), maxv)
-
-def update_particles(particles, gx, gy):
-    random.shuffle(particles)
-    grid = build_grid(particles)
-
+def update_particles(particles, gx, gy, grid):
     def cell_free(cx, cy):
-        if cx < 0 or cx >= SIZE or cy < 0 or cy >= SIZE:
+        if cx < 0 or cx >= SIM_SIZE or cy < 0 or cy >= SIM_SIZE:
             return False
         return not grid[cy, cx]
 
     def gravity_dirs(gx, gy):
-        total = abs(gx) + abs(gy)
-        if total < 0.001:
-            return [(0, 1, 1.0)]
-        dirs = []
-        if abs(gy) > 0.001:
-            dirs.append((0, 1 if gy > 0 else -1, abs(gy) / total))
-        if abs(gx) > 0.001:
-            dirs.append((1 if gx > 0 else -1, 0, abs(gx) / total))
+        dirs = [
+            (0, 1), (1, 0), (0, -1), (-1, 0),
+            (1, 1), (-1, 1), (1, -1), (-1, -1)
+        ]
+
+        g_len = (gx*gx + gy*gy) ** 0.5
+        if g_len < 1e-6:
+            return [(0, 1)]
+
+        ngx = gx / g_len
+        ngy = gy / g_len
+
+        # Sort directions by dot product with gravity
+        dirs.sort(key=lambda d: d[0]*ngx + d[1]*ngy, reverse=True)
+
         return dirs
+    
+    dirs = gravity_dirs(gx, gy)
 
     for p in particles:
-        # Apply gravity
         p.vx += gx * DT
         p.vy += gy * DT
-        p.vx = clamp(p.vx, -3.0, 3.0)
-        p.vy = clamp(p.vy, -3.0, 3.0)
 
         ix = int(p.x)
         iy = int(p.y)
 
-        # Pick down direction stochastically based on gravity vector
-        dirs = gravity_dirs(gx, gy)
-        r = random.random()
-        cumulative = 0
-        down_x, down_y = dirs[-1][0], dirs[-1][1]
-        for dx, dy, prob in dirs:
-            cumulative += prob
-            if r < cumulative:
-                down_x, down_y = dx, dy
-                break
-
-        # Perpendicular (sideways) axis
-        side_x = -down_y
-        side_y = down_x
-
-        p_side = p.vx * side_x + p.vy * side_y
-
-        # Candidate position from velocity
-        nx = int(p.x + p.vx * DT)
-        ny = int(p.y + p.vy * DT)
-
         moved = False
-
-        # --- Try direct move ---
-        if cell_free(nx, ny):
-            grid[iy, ix] = False
-            p.x = float(nx)
-            p.y = float(ny)
-            if int(p.x) <= 0:        p.x = 0.5;        p.vx = abs(p.vx) * DAMP_FACTOR
-            if int(p.x) >= SIZE - 1: p.x = SIZE - 1.5; p.vx = -abs(p.vx) * DAMP_FACTOR
-            if int(p.y) <= 0:        p.y = 0.5;        p.vy = abs(p.vy) * DAMP_FACTOR
-            if int(p.y) >= SIZE - 1: p.y = SIZE - 1.5; p.vy = -abs(p.vy) * DAMP_FACTOR
-            grid[int(p.y), int(p.x)] = True
-            moved = True
-
-        # --- Try one step in down direction ---
-        if not moved:
-            tx, ty = ix + down_x, iy + down_y
+        
+        for dx, dy in dirs:
+            tx = ix + dx
+            ty = iy + dy
             if cell_free(tx, ty):
                 grid[iy, ix] = False
                 p.x = float(tx)
@@ -124,67 +92,62 @@ def update_particles(particles, gx, gy):
                 p.vy *= DAMP_FACTOR
                 grid[ty, tx] = True
                 moved = True
-
-        # --- Try diagonal (down + side) ---
-        if not moved:
-            dirs_side = [-1, 1] if random.random() < 0.5 else [1, -1]
-            if p_side > 0.1:    dirs_side = [1, -1]
-            elif p_side < -0.1: dirs_side = [-1, 1]
-
-            for d in dirs_side:
-                diag_x = ix + down_x + d * side_x
-                diag_y = iy + down_y + d * side_y
-                if cell_free(diag_x, diag_y):
-                    grid[iy, ix] = False
-                    p.x = float(diag_x)
-                    p.y = float(diag_y)
-                    p_down = p.vx * down_x + p.vy * down_y
-                    p.vx = down_x * p_down * DAMP_FACTOR + d * side_x * abs(p_down) * 0.4
-                    p.vy = down_y * p_down * DAMP_FACTOR + d * side_y * abs(p_down) * 0.4
-                    grid[diag_y, diag_x] = True
-                    moved = True
-                    break
-
-        # --- Try sliding sideways ---
-        if not moved:
-            dirs_side = [-1, 1] if random.random() < 0.5 else [1, -1]
-            if p_side > 0.3:    dirs_side = [1, -1]
-            elif p_side < -0.3: dirs_side = [-1, 1]
-
-            for d in dirs_side:
-                slide_x = ix + d * side_x
-                slide_y = iy + d * side_y
-                if cell_free(slide_x, slide_y):
-                    grid[iy, ix] = False
-                    p.x = float(slide_x)
-                    p.y = float(slide_y)
-                    p.vx = d * side_x * 0.8
-                    p.vy = d * side_y * 0.8
-                    grid[slide_y, slide_x] = True
-                    moved = True
-                    break
+                break
 
         # --- Fully blocked ---
         if not moved:
             p.vx *= 0.5
             p.vy *= 0.5
-            p.x = float(max(0, min(SIZE - 1, ix)))
-            p.y = float(max(0, min(SIZE - 1, iy)))
+            p.x = float(max(0, min(SIM_SIZE - 1, ix)))
+            p.y = float(max(0, min(SIM_SIZE - 1, iy)))
+
 
     return particles
 
 
-def render(screen, particles):
-    grid = build_grid(particles)
+def render(screen, grid):
+    screen.fill(BACKGROUND_COLOR)
+
     for y in range(SIZE):
         for x in range(SIZE):
-            rect = (x * CELL_SIZE, y * CELL_SIZE, CELL_SIZE - 1, CELL_SIZE - 1)
-            color = FLUID_COLOR if grid[y, x] else BACKGROUND_COLOR
+
+            count = 0
+
+            # Examine UPSCALE×UPSCALE block
+            for dy in range(UPSCALE):
+                for dx in range(UPSCALE):
+                    sy = y * UPSCALE + dy
+                    sx = x * UPSCALE + dx
+                    if grid[sy, sx]:
+                        count += 1
+
+            # Compute fill ratio (0.0 to 1.0)
+            ratio = count / (UPSCALE * UPSCALE)
+
+            # Map ratio to brightness (adjust 80→255)
+            brightness = int(175 * ratio)  # 80 = base, 255 = max
+            color = (0, 0, min(brightness*2, 255))
+
+            rect = (
+                x * CELL_SIZE,
+                y * CELL_SIZE,
+                CELL_SIZE - 1,
+                CELL_SIZE - 1
+            )
             pygame.draw.rect(screen, color, rect)
 
+    # --- Draw tilt vector ---
+    center_x = SIZE * CELL_SIZE // 2
+    center_y = SIZE * CELL_SIZE // 2
 
+    # Vector length in pixels
+    vector_len = SIZE * CELL_SIZE // 2
 
+    # Compute end point from TILT angle
+    end_x = int(center_x + sin(TILT) * vector_len)
+    end_y = int(center_y + cos(TILT) * vector_len)  # negative because screen y grows downward
 
+    pygame.draw.line(screen, (255, 50, 50), (center_x, center_y), (end_x, end_y), 3)
 
 
 pygame.init()
@@ -207,29 +170,40 @@ while running:
             if event.key == pygame.K_r:
                 particles = []
                 for _ in range(NUM_PARTICLES):
-                    px = random.uniform(SIZE * 0.3, SIZE * 0.7)
+                    px = random.uniform(SIM_SIZE * 0.3, SIM_SIZE * 0.7)
                     py = random.uniform(0.5, 3.0)
                     particles.append(Particle(px, py))
             if event.key == pygame.K_SPACE:
                 for _ in range(10):
-                    px = random.uniform(SIZE * 0.3, SIZE * 0.7)
+                    px = random.uniform(SIM_SIZE * 0.3, SIM_SIZE * 0.7)
                     py = random.uniform(0.0, 1.0)
                     particles.append(Particle(px, py))
-            # Arrow keys to test tilt
-            if event.key == pygame.K_LEFT:  TILT -= 0.1
-            if event.key == pygame.K_RIGHT: TILT += 0.1
 
         if event.type == pygame.MOUSEBUTTONDOWN:
             mouse_held = True
         if event.type == pygame.MOUSEBUTTONUP:
             mouse_held = False
 
+    keys = pygame.key.get_pressed()
+
+    ROT_SPEED = 2.5  # radians per second
+
+    if keys[pygame.K_LEFT]:
+        TILT -= ROT_SPEED * DT
+    if keys[pygame.K_RIGHT]:
+        TILT += ROT_SPEED * DT
+
+    if keys[pygame.K_UP]:
+        TILT -= ROT_SPEED * DT * 3
+    if keys[pygame.K_DOWN]:
+        TILT += ROT_SPEED * DT * 3
+
     # Click/drag to pour particles
     if mouse_held:
         mx, my = pygame.mouse.get_pos()
-        cell_x = mx // CELL_SIZE
-        cell_y = my // CELL_SIZE
-        if 0 <= cell_x < SIZE and 0 <= cell_y < SIZE:
+        cell_x = mx // CELL_SIZE * UPSCALE
+        cell_y = my // CELL_SIZE * UPSCALE
+        if 0 <= cell_x < SIM_SIZE and 0 <= cell_y < SIM_SIZE:
             for _ in range(3):
                 p = Particle(cell_x + random.uniform(-0.5, 0.5),
                              cell_y + random.uniform(-0.5, 0.5))
@@ -238,9 +212,10 @@ while running:
     # Gravity vector from tilt angle
     gx = G * sin(TILT)
     gy = G * cos(TILT)
-
-    particles = update_particles(particles, gx, gy)
-    render(screen, particles)
+    grid = build_grid(particles)
+    for _ in range(3):
+        particles = update_particles(particles, gx, gy, grid)
+    render(screen, grid)
     pygame.display.flip()
     DT = clock.tick(FPS) / 1000
 
