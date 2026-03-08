@@ -1,14 +1,15 @@
 import numpy as np
 import pygame
-from math import floor, sin, cos
+from math import sin, cos
 import random
 
 # Simulation settings
-G = 100
-FPS = 30
+G = 10
+FPS = 60
 SIZE = 16
 DAMP_FACTOR = 0.95
 UPSCALE = 3
+STEPS_PER_FRAME = 3
 
 # Color and Size settings
 FLUID_COLOR = (0, 80, 255)
@@ -80,6 +81,19 @@ def update_particles(particles, gx, gy, grid):
         iy = int(p.y)
 
         moved = False
+
+        nx = p.x + p.vx * DT
+        ny = p.y + p.vy * DT
+
+        tx = int(nx)
+        ty = int(ny)
+
+        if cell_free(tx, ty):
+            grid[iy, ix] = False
+            p.x = nx
+            p.y = ny
+            grid[ty, tx] = True
+            continue
         
         for dx, dy in dirs:
             tx = ix + dx
@@ -88,8 +102,6 @@ def update_particles(particles, gx, gy, grid):
                 grid[iy, ix] = False
                 p.x = float(tx)
                 p.y = float(ty)
-                p.vx *= DAMP_FACTOR
-                p.vy *= DAMP_FACTOR
                 grid[ty, tx] = True
                 moved = True
                 break
@@ -100,6 +112,9 @@ def update_particles(particles, gx, gy, grid):
             p.vy *= 0.5
             p.x = float(max(0, min(SIM_SIZE - 1, ix)))
             p.y = float(max(0, min(SIM_SIZE - 1, iy)))
+
+        p.vx *= DAMP_FACTOR
+        p.vy *= DAMP_FACTOR
 
 
     return particles
@@ -189,14 +204,14 @@ while running:
     ROT_SPEED = 2.5  # radians per second
 
     if keys[pygame.K_LEFT]:
-        TILT -= ROT_SPEED * DT
+        TILT -= ROT_SPEED * DT / STEPS_PER_FRAME
     if keys[pygame.K_RIGHT]:
-        TILT += ROT_SPEED * DT
+        TILT += ROT_SPEED * DT / STEPS_PER_FRAME
 
     if keys[pygame.K_UP]:
-        TILT -= ROT_SPEED * DT * 3
+        TILT -= ROT_SPEED * DT * 3 / STEPS_PER_FRAME
     if keys[pygame.K_DOWN]:
-        TILT += ROT_SPEED * DT * 3
+        TILT += ROT_SPEED * DT * 3 / STEPS_PER_FRAME
 
     # Click/drag to pour particles
     if mouse_held:
@@ -213,10 +228,11 @@ while running:
     gx = G * sin(TILT)
     gy = G * cos(TILT)
     grid = build_grid(particles)
-    for _ in range(3):
+    random.shuffle(particles)
+    for _ in range(STEPS_PER_FRAME):
         particles = update_particles(particles, gx, gy, grid)
     render(screen, grid)
     pygame.display.flip()
-    DT = clock.tick(FPS) / 1000
+    DT = clock.tick(FPS) / 1000 * STEPS_PER_FRAME
 
 pygame.quit()
